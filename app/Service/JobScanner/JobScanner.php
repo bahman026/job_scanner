@@ -1,43 +1,21 @@
 <?php
 namespace App\Service\JobScanner;
 
-use GuzzleHttp\Exception\GuzzleException;
-use PHPHtmlParser\Exceptions\ChildNotFoundException;
-use PHPHtmlParser\Exceptions\CircularException;
-use PHPHtmlParser\Exceptions\CurlException;
-use PHPHtmlParser\Exceptions\NotLoadedException;
-use PHPHtmlParser\Exceptions\StrictException;
+use App\Factories\Services\DiscountedPriceCalculator;
+use App\Factories\Services\RegularPriceCalculator;
+use App\Factories\Services\TaxIncludedPriceCalculator;
+use App\Service\JobScanner\Services\Jobinja;
+use App\Service\JobScanner\Services\Jobvision;
 
 class JobScanner
 {
-    /**
-     * @throws GuzzleException
-     */
-    protected static function getTopCompanies(): array
-    {
-        return TopCompany::getCompanies();
-    }
 
-    /**
-     * @throws CurlException
-     * @throws ChildNotFoundException
-     * @throws NotLoadedException
-     * @throws CircularException
-     * @throws GuzzleException
-     * @throws StrictException
-     */
-    public static function getJobs($keywords): array
+    public static function getJobs($site, $keywords): array
     {
-        $companyLinks = JobScanner::getTopCompanies();
-        foreach ($companyLinks as $key => $link) {
-            $jobs = (JobOffer::getOffers($link, $keywords));
-            if (!$jobs) {
-                unset($companyLinks[$key]);
-                continue;
-            }
-            $state = CompanyLocation::getLocation($link);
-            $companyLinks[$key] = compact('link', 'state', 'jobs');
-        }
-        return array_values($companyLinks);
+        return match ($site) {
+            'jobinja' => (new Jobinja())->getJobs($keywords),
+            'jobvision' => (new Jobvision())->getJobs($keywords),
+            default => throw new \InvalidArgumentException('Invalid product type.'),
+        };
     }
 }

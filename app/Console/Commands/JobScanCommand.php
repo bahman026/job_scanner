@@ -26,6 +26,8 @@ class JobScanCommand extends Command
      */
     public function handle()
     {
+        echo "start" . PHP_EOL;
+
         $keywords = [];
         for ($i = 1; $i <= 4; $i++) {
             if ($this->argument('keyword' . $i) == null) {
@@ -33,11 +35,14 @@ class JobScanCommand extends Command
             }
             $keywords[] = $this->argument('keyword' . $i);
         }
-        echo "start" . PHP_EOL;
-        echo "Receiving information" . PHP_EOL;
+
+        echo "Receiving information from jobinja" . PHP_EOL;
+        $job['jobinja'] = JobScanner::getJobs('jobinja', $keywords);
+
+        echo "Receiving information from jobvision" . PHP_EOL;
+        $job['jobvision'] = JobScanner::getJobs('jobvision', $keywords);
         $resultFile = fopen("result.json", "w") or die("Unable to open file!");
-        $companyLinks = JobScanner::getJobs($keywords);
-        fwrite($resultFile, json_encode($companyLinks, JSON_UNESCAPED_UNICODE));
+        fwrite($resultFile, json_encode($job, JSON_UNESCAPED_UNICODE));
         fclose($resultFile);
         echo "finish";
     }
