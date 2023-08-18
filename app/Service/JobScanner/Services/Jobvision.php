@@ -30,7 +30,7 @@ class Jobvision implements JobScanner
 
             $searchFlag = false;
             foreach ($keywords as $keyword) {
-                if (str_contains($job['title'], $keyword)) {
+                if (str_contains(strtolower($job['title']), strtolower($keyword))) {
                     $searchFlag = true;
                 }
             }
@@ -57,29 +57,42 @@ class Jobvision implements JobScanner
     public function getCompanies()
     {
         $url = "https://candidateapi.jobvision.ir/api/v1/Company/GetListOfFilteredCompaniesSummaries";
-        $response = Http::post($url, [
-                "keyword" => "",
-                "filterParameters" => [
-                    "onlyHasActiveJobPosts" => true,
-                    "listOfCityIds" => [17, 41],
-                    "listOfCompanyBenefits" => [],
-                    "listOfCompanyScores" => [],
-                    "listOfCompanySizes" => [],
-                    "listOfIndustryIds" => [],
-                ],
-                "pageSize" => 80,
-                "pageNumber" => 1,
-                "orderBy" => 1,
-            ]
-        );
-        return json_decode($response->body(), true)['data']['companies'];
+        $data = [
+            "keyword" => "",
+            "filterParameters" => [
+                "onlyHasActiveJobPosts" => true,
+                "listOfCityIds" => [17, 41],
+                "listOfCompanyBenefits" => [],
+                "listOfCompanyScores" => [],
+                "listOfCompanySizes" => [],
+                "listOfIndustryIds" => [],
+            ],
+            "pageSize" => 200,
+            "pageNumber" => 1,
+            "orderBy" => 1,
+        ];
+        $response = Http::post($url, $data);
+        $biggestCompanies = $response['data']['companies'];
+        $data['orderBy'] = 0;
+        $response = Http::post($url, $data);
+        $largestCompanies = $response['data']['companies'];
+        foreach ($largestCompanies as $company) {
+            if (in_array($company['companyId'], $biggestCompanies)) {
+                continue;
+            }
+            $biggestCompanies[] = $company;
+        }
+        return $biggestCompanies;
     }
 
 
-    public function getJobs($keywords): array
+    public function getJobs($keywords, $process = false): array
     {
         $companies = $this->getCompanies();
         foreach ($companies as $key => $company) {
+            if ($process) {
+                $process->progressAdvance();
+            }
             $jobs = $this->getOffers($company, $keywords);
             if (!$jobs) {
                 unset($companies[$key]);
@@ -87,6 +100,7 @@ class Jobvision implements JobScanner
             }
             $state = $this->getLocation($company);
             $companies[$key] = compact('state', 'jobs', 'company');
+
         }
         return array_values($companies);
     }

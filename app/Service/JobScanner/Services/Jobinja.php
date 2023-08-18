@@ -3,8 +3,6 @@
 namespace App\Service\JobScanner\Services;
 
 use App\Service\JobScanner\Contracts\JobScanner;
-use GuzzleHttp\Exception\ClientException;
-use Mockery\Exception;
 use PHPHtmlParser\Dom;
 
 class Jobinja implements JobScanner
@@ -37,14 +35,14 @@ class Jobinja implements JobScanner
             foreach ($links as $link) {
                 $linkHref = $link->getAttribute('href');
 
-                if (str_contains(trim($link->parentNode->nodeValue), "(منقضی شده)")) {
+                if (str_contains(trim(strtolower($link->parentNode->nodeValue)), "(منقضی شده)")) {
                     continue;
                 }
 
                 if (strlen(trim($linkHref)) == 0) {
                     continue;
                 }
-                if ($linkHref[0] == '#' || !str_contains($linkHref, $companyLink)) {
+                if ($linkHref[0] == '#' || !str_contains(strtolower($linkHref), strtolower($companyLink))) {
                     continue;
                 }
                 if (in_array($linkHref, $extractedLinks)) {
@@ -56,7 +54,7 @@ class Jobinja implements JobScanner
 
                 $searchFlag = false;
                 foreach ($keywords as $keyword) {
-                    if (str_contains($link->parentNode->nodeValue, $keyword)) {
+                    if (str_contains(strtolower($link->parentNode->nodeValue), strtolower($keyword))) {
                         $searchFlag = true;
                     }
                 }
@@ -95,17 +93,22 @@ class Jobinja implements JobScanner
         }
 
         $extractedLinks = array_filter($extractedLinks, function ($item) {
-            return str_contains($item, "https://jobinja.ir/companies/") && !str_contains($item, "/jobs");
+            return str_contains(strtolower($item), "https://jobinja.ir/companies/") && !str_contains(strtolower($item), "/jobs");
         });
         return array_values($extractedLinks);
     }
 
 
-    public function getJobs($keywords)
+    public function getJobs($keywords, $process = false)
     {
         $companyLinks = $this->getCompanies();
         foreach ($companyLinks as $key => $link) {
+            if ($process) {
+                $process->progressAdvance();
+            }
+
             $jobs = $this->getOffers($link, $keywords);
+
             if (!$jobs) {
                 unset($companyLinks[$key]);
                 continue;

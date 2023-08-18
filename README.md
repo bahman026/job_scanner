@@ -1,7 +1,7 @@
 
 ## About job_scanner
 
-Search for job opportunities in the top 50 companies on jobinja and jobvision
+Search for job opportunities in the top companies on jobinja and jobvision
 
 
 ## How to use

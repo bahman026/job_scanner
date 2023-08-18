@@ -10,6 +10,6 @@ interface JobScanner
 
     public function getCompanies();
 
-    public function getJobs($keywords);
+    public function getJobs($keywords,$process=false);
 
 }
