@@ -18,3 +18,4 @@ result.json
 /.fleet
 /.idea
 /.vscode
+/docker/volumes
