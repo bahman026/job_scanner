@@ -4,6 +4,7 @@ namespace App\Service\JobScanner\Services;
 
 use App\Service\JobScanner\Contracts\JobScanner;
 use App\Service\JobScanner\Exceptions\SourceUnavailableException;
+use App\Service\JobScanner\Support\SearchOptions;
 use PHPHtmlParser\Dom;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
@@ -175,8 +176,14 @@ class Jobinja implements JobScanner
     }
 
 
-    public function getJobs($keywords, $process = false)
+    /**
+     * City filtering uses the company's address, since Jobinja's company job
+     * lists don't give a per-job location. Sorting by date isn't supported:
+     * the scraped lists carry no posting dates.
+     */
+    public function getJobs($keywords, $process = false, ?SearchOptions $options = null)
     {
+        $options ??= new SearchOptions();
         $companyLinks = $this->getCompanies();
 
         // Create requests for parallel processing
@@ -231,6 +238,10 @@ class Jobinja implements JobScanner
             $state = '';
             if ($locationResponse && $locationResponse->getStatusCode() === 200) {
                 $state = $this->parseLocationFromResponse($locationResponse->getBody()->getContents());
+            }
+
+            if (!$options->matchesCity($state)) {
+                continue;
             }
 
             $results[] = compact('link', 'state', 'jobs');

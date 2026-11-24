@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Service\JobScanner\Exceptions\SourceUnavailableException;
 use App\Service\JobScanner\JobScanner;
+use App\Service\JobScanner\Support\SearchOptions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -18,7 +19,11 @@ class JobSearchController extends Controller
     {
         $request->validate([
             'keywords' => 'required|string|max:255',
+            'city' => 'nullable|string|max:100',
+            'sort' => 'nullable|in:' . SearchOptions::SORT_RELEVANCE . ',' . SearchOptions::SORT_NEWEST,
         ]);
+
+        $options = SearchOptions::fromArray($request->only(['city', 'sort']));
 
         $keywords = array_filter(explode(',', $request->keywords));
         $keywords = array_map('trim', $keywords);
@@ -38,7 +43,9 @@ class JobSearchController extends Controller
         // Log the search attempt
         \Log::info('Job search started', [
             'keywords' => $keywords,
-            'original_input' => $request->keywords
+            'original_input' => $request->keywords,
+            'city' => $options->city,
+            'sort' => $options->sort,
         ]);
 
         try {
@@ -46,7 +53,7 @@ class JobSearchController extends Controller
             $startTime = microtime(true);
             
             // Use sequential processing for web context (more reliable)
-            [$results, $sources] = $this->runSequentially($keywords);
+            [$results, $sources] = $this->runSequentially($keywords, $options);
 
             $endTime = microtime(true);
             $executionTime = round($endTime - $startTime, 2);
@@ -68,7 +75,8 @@ class JobSearchController extends Controller
                 'execution_time' => $executionTime,
                 'total_companies' => count($results['jobinja']) + count($results['jobvision']),
                 'total_jobs' => $this->countTotalJobs($results),
-                'keywords_used' => $keywords
+                'keywords_used' => $keywords,
+                'filters' => ['city' => $options->city, 'sort' => $options->sort],
             ]);
 
         } catch (\Exception $e) {
@@ -142,14 +150,14 @@ class JobSearchController extends Controller
      *
      * @return array{0: array<string, array>, 1: array<string, array{ok: bool, error: ?string}>}
      */
-    private function runSequentially($keywords): array
+    private function runSequentially($keywords, SearchOptions $options): array
     {
         $results = [];
         $sources = [];
 
         foreach (['jobinja' => 'Jobinja', 'jobvision' => 'Jobvision'] as $site => $label) {
             try {
-                $results[$site] = JobScanner::getJobs($site, $keywords, null);
+                $results[$site] = JobScanner::getJobs($site, $keywords, null, $options);
                 $sources[$site] = ['ok' => true, 'error' => null];
             } catch (SourceUnavailableException $e) {
                 Log::warning("{$label} unavailable: " . $e->getMessage());

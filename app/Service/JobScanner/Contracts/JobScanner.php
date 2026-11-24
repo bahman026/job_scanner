@@ -2,6 +2,8 @@
 
 namespace App\Service\JobScanner\Contracts;
 
+use App\Service\JobScanner\Support\SearchOptions;
+
 interface JobScanner
 {
     public function getLocation($link);
@@ -10,6 +12,6 @@ interface JobScanner
 
     public function getCompanies();
 
-    public function getJobs($keywords,$process=false);
+    public function getJobs($keywords, $process = false, ?SearchOptions $options = null);
 
 }
