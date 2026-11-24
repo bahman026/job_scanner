@@ -96,6 +96,7 @@ class JobScanCommand extends Command
                 $jobinjaResults = JobScanner::getJobs('jobinja', $keywords, null);
                 file_put_contents($jobinjaFile, json_encode($jobinjaResults));
             } catch (\Exception $e) {
+                fwrite(STDERR, "Warning: Jobinja failed - " . $e->getMessage() . PHP_EOL);
                 file_put_contents($jobinjaFile, json_encode([]));
             }
             exit(0);
@@ -109,6 +110,7 @@ class JobScanCommand extends Command
                 $jobvisionResults = JobScanner::getJobs('jobvision', $keywords, null);
                 file_put_contents($jobvisionFile, json_encode($jobvisionResults));
             } catch (\Exception $e) {
+                fwrite(STDERR, "Warning: Jobvision failed - " . $e->getMessage() . PHP_EOL);
                 file_put_contents($jobvisionFile, json_encode([]));
             }
             exit(0);

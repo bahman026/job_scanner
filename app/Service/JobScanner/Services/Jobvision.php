@@ -3,8 +3,9 @@
 namespace App\Service\JobScanner\Services;
 
 use App\Service\JobScanner\Contracts\JobScanner;
-use Illuminate\Support\Facades\Http;
+use App\Service\JobScanner\Exceptions\SourceUnavailableException;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Pool;
 use GuzzleHttp\Psr7\Request;
 
@@ -122,10 +123,31 @@ class Jobvision implements JobScanner
         }
     }
 
-    public function getCompanies()
+    /**
+     * Merge Jobvision's "biggest" (orderBy 0) and "largest" (orderBy 1) company
+     * lists, de-duplicated by companyId.
+     *
+     * @throws SourceUnavailableException when either list can't be fetched.
+     */
+    public function getCompanies(): array
+    {
+        $companies = $this->fetchCompanySummaries(0);
+        $seenIds = array_column($companies, 'companyId');
+
+        foreach ($this->fetchCompanySummaries(1) as $company) {
+            if (!in_array($company['companyId'], $seenIds)) {
+                $companies[] = $company;
+                $seenIds[] = $company['companyId'];
+            }
+        }
+
+        return $companies;
+    }
+
+    private function fetchCompanySummaries(int $orderBy): array
     {
         $url = "https://candidateapi.jobvision.ir/api/v1/Company/GetListOfFilteredCompaniesSummaries";
-        $data = [
+        $payload = [
             "keyword" => "",
             "filterParameters" => [
                 "onlyHasActiveJobPosts" => false,
@@ -137,91 +159,40 @@ class Jobvision implements JobScanner
             ],
             "pageSize" => 20,
             "pageNumber" => 1,
-            "orderBy" => 0,
+            "orderBy" => $orderBy,
         ];
-        $response = Http::withHeaders([
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept' => 'application/json, text/plain, */*',
-            'Accept-Language' => 'en-US,en;q=0.9,fa;q=0.8',
-            'Accept-Encoding' => 'gzip, deflate, br',
-            'Content-Type' => 'application/json',
-            'Referer' => 'https://jobvision.ir/',
-            'Origin' => 'https://jobvision.ir',
-            'Sec-Fetch-Dest' => 'empty',
-            'Sec-Fetch-Mode' => 'cors',
-            'Sec-Fetch-Site' => 'same-site',
-            'Cache-Control' => 'no-cache',
-            'Pragma' => 'no-cache'
-        ])->post($url, $data);
-        
-        // Check if the response is successful and has the expected structure
-        if (!$response->successful()) {
-            \Log::error('Jobvision API request failed:', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-                'url' => $url,
-                'data' => $data
+
+        try {
+            // 'json' sets the body and the Content-Type header; the client already carries the browser headers.
+            $response = $this->client->post($url, ['json' => $payload]);
+        } catch (GuzzleException $e) {
+            \Log::error('Jobvision company list request failed: ' . $e->getMessage(), ['orderBy' => $orderBy]);
+            throw new SourceUnavailableException('Jobvision could not be reached.', 0, $e);
+        }
+
+        $status = $response->getStatusCode();
+        $body = $response->getBody()->getContents();
+
+        if ($status !== 200) {
+            \Log::error('Jobvision company list request failed', [
+                'status' => $status,
+                'orderBy' => $orderBy,
+                'body' => mb_substr($body, 0, 500),
             ]);
-            throw new \Exception("Jobvision API request failed with status: " . $response->status() . " - Response: " . $response->body());
+            throw new SourceUnavailableException("Jobvision returned HTTP {$status}.");
         }
-        
-        $responseData = $response->json();
-        
-        // Debug: Log the actual response structure
-        \Log::info('Jobvision API Response Structure:', $responseData);
-        
-        // Check if the response has the expected structure
-        if (!isset($responseData['data']) || !isset($responseData['data']['companies'])) {
-            \Log::error('Unexpected Jobvision API response structure:', $responseData);
-            throw new \Exception("Unexpected API response structure from Jobvision");
-        }
-        
-        $biggestCompanies = $responseData['data']['companies'];
-        $data['orderBy'] = 1;
-        $response = Http::withHeaders([
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept' => 'application/json, text/plain, */*',
-            'Accept-Language' => 'en-US,en;q=0.9,fa;q=0.8',
-            'Accept-Encoding' => 'gzip, deflate, br',
-            'Content-Type' => 'application/json',
-            'Referer' => 'https://jobvision.ir/',
-            'Origin' => 'https://jobvision.ir',
-            'Sec-Fetch-Dest' => 'empty',
-            'Sec-Fetch-Mode' => 'cors',
-            'Sec-Fetch-Site' => 'same-site',
-            'Cache-Control' => 'no-cache',
-            'Pragma' => 'no-cache'
-        ])->post($url, $data);
-        
-        if (!$response->successful()) {
-            \Log::error('Jobvision API request failed (second request):', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-                'url' => $url,
-                'data' => $data
+
+        $responseData = json_decode($body, true);
+
+        if (!isset($responseData['data']['companies']) || !is_array($responseData['data']['companies'])) {
+            \Log::error('Unexpected Jobvision company list response', [
+                'orderBy' => $orderBy,
+                'body' => mb_substr($body, 0, 500),
             ]);
-            throw new \Exception("Jobvision API request failed with status: " . $response->status() . " - Response: " . $response->body());
+            throw new SourceUnavailableException('Jobvision returned an unexpected response (the API may have changed).');
         }
-        
-        $responseData = $response->json();
-        
-        if (!isset($responseData['data']) || !isset($responseData['data']['companies'])) {
-            \Log::error('Unexpected Jobvision API response structure for second request:', $responseData);
-            throw new \Exception("Unexpected API response structure from Jobvision (second request)");
-        }
-        
-        $largestCompanies = $responseData['data']['companies'];
-        
-        // Extract company IDs from biggestCompanies for comparison
-        $biggestCompanyIds = array_column($biggestCompanies, 'companyId');
-        
-        foreach ($largestCompanies as $company) {
-            if (in_array($company['companyId'], $biggestCompanyIds)) {
-                continue;
-            }
-            $biggestCompanies[] = $company;
-        }
-        return $biggestCompanies;
+
+        return $responseData['data']['companies'];
     }
 
 

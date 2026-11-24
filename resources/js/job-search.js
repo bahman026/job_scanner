@@ -1,4 +1,10 @@
 // Job Search Application
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
 class JobSearchApp {
     constructor() {
         this.initializeEventListeners();
@@ -29,7 +35,7 @@ class JobSearchApp {
             
             if (data.success) {
                 console.log('Search successful, hiding error message');
-                this.displayResults(data.data);
+                this.displayResults(data.data, data.sources || {});
                 this.updateStats(data);
                 resultsSection.classList.remove('hidden');
                 // Hide error message on successful search
@@ -103,16 +109,33 @@ class JobSearchApp {
         }
     }
 
-    displayResults(data) {
-        this.displayJobinjaResults(data.jobinja);
-        this.displayJobvisionResults(data.jobvision);
+    displayResults(data, sources) {
+        this.displayJobinjaResults(data.jobinja, sources.jobinja);
+        this.displayJobvisionResults(data.jobvision, sources.jobvision);
     }
 
-    displayJobinjaResults(jobs) {
+    // Shown instead of "No jobs found" when a source couldn't be searched at all.
+    unavailableNotice(siteName, source) {
+        const reason = escapeHtml(source.error || `${siteName} could not be searched.`);
+        return `
+            <div class="text-center text-amber-700 bg-amber-50 border border-amber-200 rounded-lg py-8 px-4">
+                <i class="fas fa-exclamation-triangle text-4xl mb-4"></i>
+                <p class="font-semibold">${siteName} is unavailable right now</p>
+                <p class="text-sm mt-1">${reason}</p>
+                <p class="text-sm mt-1">Results from ${siteName} are missing from this search.</p>
+            </div>`;
+    }
+
+    displayJobinjaResults(jobs, source) {
         const container = document.getElementById('jobinjaJobsList');
         const countElement = document.getElementById('jobinjaCount');
         
         countElement.textContent = jobs.length;
+        
+        if (source && source.ok === false) {
+            container.innerHTML = this.unavailableNotice('Jobinja', source);
+            return;
+        }
         
         if (jobs.length === 0) {
             container.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-search text-4xl mb-4"></i><p>No jobs found on Jobinja</p></div>';
@@ -153,11 +176,16 @@ class JobSearchApp {
         `).join('');
     }
 
-    displayJobvisionResults(jobs) {
+    displayJobvisionResults(jobs, source) {
         const container = document.getElementById('jobvisionJobsList');
         const countElement = document.getElementById('jobvisionCount');
         
         countElement.textContent = jobs.length;
+        
+        if (source && source.ok === false) {
+            container.innerHTML = this.unavailableNotice('Jobvision', source);
+            return;
+        }
         
         if (jobs.length === 0) {
             container.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-search text-4xl mb-4"></i><p>No jobs found on Jobvision</p></div>';
