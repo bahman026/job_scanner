@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Service\JobScanner\Exceptions\SourceUnavailableException;
 use App\Service\JobScanner\JobScanner;
+use App\Service\JobScanner\Support\SearchOptions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -17,7 +19,11 @@ class JobSearchController extends Controller
     {
         $request->validate([
             'keywords' => 'required|string|max:255',
+            'city' => 'nullable|string|max:100',
+            'sort' => 'nullable|in:' . SearchOptions::SORT_RELEVANCE . ',' . SearchOptions::SORT_NEWEST,
         ]);
+
+        $options = SearchOptions::fromArray($request->only(['city', 'sort']));
 
         $keywords = array_filter(explode(',', $request->keywords));
         $keywords = array_map('trim', $keywords);
@@ -37,20 +43,17 @@ class JobSearchController extends Controller
         // Log the search attempt
         \Log::info('Job search started', [
             'keywords' => $keywords,
-            'original_input' => $request->keywords
+            'original_input' => $request->keywords,
+            'city' => $options->city,
+            'sort' => $options->sort,
         ]);
 
         try {
             // Run the job scanner
             $startTime = microtime(true);
             
-            $results = [
-                'jobinja' => [],
-                'jobvision' => []
-            ];
-
             // Use sequential processing for web context (more reliable)
-            $results = $this->runSequentially($keywords);
+            [$results, $sources] = $this->runSequentially($keywords, $options);
 
             $endTime = microtime(true);
             $executionTime = round($endTime - $startTime, 2);
@@ -61,16 +64,19 @@ class JobSearchController extends Controller
                 'execution_time' => $executionTime,
                 'jobinja_companies' => count($results['jobinja']),
                 'jobvision_companies' => count($results['jobvision']),
-                'total_jobs' => $this->countTotalJobs($results)
+                'total_jobs' => $this->countTotalJobs($results),
+                'sources' => $sources,
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $results,
+                'sources' => $sources,
                 'execution_time' => $executionTime,
                 'total_companies' => count($results['jobinja']) + count($results['jobvision']),
                 'total_jobs' => $this->countTotalJobs($results),
-                'keywords_used' => $keywords
+                'keywords_used' => $keywords,
+                'filters' => ['city' => $options->city, 'sort' => $options->sort],
             ]);
 
         } catch (\Exception $e) {
@@ -138,28 +144,34 @@ class JobSearchController extends Controller
         return $results;
     }
 
-    private function runSequentially($keywords)
+    /**
+     * Scan each source in turn. A failing source yields no results plus an
+     * entry in $sources saying why, so the UI can tell "blocked" from "no matches".
+     *
+     * @return array{0: array<string, array>, 1: array<string, array{ok: bool, error: ?string}>}
+     */
+    private function runSequentially($keywords, SearchOptions $options): array
     {
-        $results = [
-            'jobinja' => [],
-            'jobvision' => []
-        ];
+        $results = [];
+        $sources = [];
 
-        try {
-            $results['jobinja'] = JobScanner::getJobs('jobinja', $keywords, null);
-        } catch (\Exception $e) {
-            Log::warning('Jobinja failed: ' . $e->getMessage());
-            $results['jobinja'] = [];
+        foreach (['jobinja' => 'Jobinja', 'jobvision' => 'Jobvision'] as $site => $label) {
+            try {
+                $results[$site] = JobScanner::getJobs($site, $keywords, null, $options);
+                $sources[$site] = ['ok' => true, 'error' => null];
+            } catch (SourceUnavailableException $e) {
+                Log::warning("{$label} unavailable: " . $e->getMessage());
+                $results[$site] = [];
+                $sources[$site] = ['ok' => false, 'error' => $e->getMessage()];
+            } catch (\Exception $e) {
+                Log::warning("{$label} failed: " . $e->getMessage(), ['exception' => $e]);
+                $results[$site] = [];
+                // Don't leak internal error details to the browser.
+                $sources[$site] = ['ok' => false, 'error' => "{$label} search failed unexpectedly."];
+            }
         }
 
-        try {
-            $results['jobvision'] = JobScanner::getJobs('jobvision', $keywords, null);
-        } catch (\Exception $e) {
-            Log::warning('Jobvision failed: ' . $e->getMessage());
-            $results['jobvision'] = [];
-        }
-
-        return $results;
+        return [$results, $sources];
     }
 
     private function countTotalJobs($results)

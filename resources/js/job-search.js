@@ -1,4 +1,27 @@
 // Job Search Application
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+// "today", "yesterday", "5 days ago", or a date for anything older than a month.
+function formatPostedDate(iso) {
+    if (!iso) return '';
+    const posted = new Date(iso);
+    if (isNaN(posted)) return '';
+    const days = Math.floor((Date.now() - posted.getTime()) / 86400000);
+    if (days <= 0) return 'Posted today';
+    if (days === 1) return 'Posted yesterday';
+    if (days < 31) return `Posted ${days} days ago`;
+    return `Posted ${posted.toLocaleDateString()}`;
+}
+
+function noJobsMessage(siteName, filters) {
+    const where = filters && filters.city ? ` in "${escapeHtml(filters.city)}"` : '';
+    return `<div class="text-center text-gray-500 py-8"><i class="fas fa-search text-4xl mb-4"></i><p>No jobs found on ${siteName}${where}</p></div>`;
+}
+
 class JobSearchApp {
     constructor() {
         this.initializeEventListeners();
@@ -29,7 +52,7 @@ class JobSearchApp {
             
             if (data.success) {
                 console.log('Search successful, hiding error message');
-                this.displayResults(data.data);
+                this.displayResults(data.data, data.sources || {}, data.filters || {});
                 this.updateStats(data);
                 resultsSection.classList.remove('hidden');
                 // Hide error message on successful search
@@ -103,19 +126,36 @@ class JobSearchApp {
         }
     }
 
-    displayResults(data) {
-        this.displayJobinjaResults(data.jobinja);
-        this.displayJobvisionResults(data.jobvision);
+    displayResults(data, sources, filters) {
+        this.displayJobinjaResults(data.jobinja, sources.jobinja, filters);
+        this.displayJobvisionResults(data.jobvision, sources.jobvision, filters);
     }
 
-    displayJobinjaResults(jobs) {
+    // Shown instead of "No jobs found" when a source couldn't be searched at all.
+    unavailableNotice(siteName, source) {
+        const reason = escapeHtml(source.error || `${siteName} could not be searched.`);
+        return `
+            <div class="text-center text-amber-700 bg-amber-50 border border-amber-200 rounded-lg py-8 px-4">
+                <i class="fas fa-exclamation-triangle text-4xl mb-4"></i>
+                <p class="font-semibold">${siteName} is unavailable right now</p>
+                <p class="text-sm mt-1">${reason}</p>
+                <p class="text-sm mt-1">Results from ${siteName} are missing from this search.</p>
+            </div>`;
+    }
+
+    displayJobinjaResults(jobs, source, filters) {
         const container = document.getElementById('jobinjaJobsList');
         const countElement = document.getElementById('jobinjaCount');
         
         countElement.textContent = jobs.length;
         
+        if (source && source.ok === false) {
+            container.innerHTML = this.unavailableNotice('Jobinja', source);
+            return;
+        }
+        
         if (jobs.length === 0) {
-            container.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-search text-4xl mb-4"></i><p>No jobs found on Jobinja</p></div>';
+            container.innerHTML = noJobsMessage('Jobinja', filters);
             return;
         }
         
@@ -153,14 +193,19 @@ class JobSearchApp {
         `).join('');
     }
 
-    displayJobvisionResults(jobs) {
+    displayJobvisionResults(jobs, source, filters) {
         const container = document.getElementById('jobvisionJobsList');
         const countElement = document.getElementById('jobvisionCount');
         
         countElement.textContent = jobs.length;
         
+        if (source && source.ok === false) {
+            container.innerHTML = this.unavailableNotice('Jobvision', source);
+            return;
+        }
+        
         if (jobs.length === 0) {
-            container.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-search text-4xl mb-4"></i><p>No jobs found on Jobvision</p></div>';
+            container.innerHTML = noJobsMessage('Jobvision', filters);
             return;
         }
         
@@ -169,11 +214,13 @@ class JobSearchApp {
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <h3 class="text-lg font-semibold text-gray-800">
-                            Company ID: ${company.company.companyId || 'N/A'}
+                            ${company.company.link
+                                ? `<a href="${escapeHtml(company.company.link)}" target="_blank" class="hover:text-orange-600">${escapeHtml(company.company.name || company.company.nameEn || 'Unknown company')}</a>`
+                                : escapeHtml(company.company.name || `Company ID: ${company.company.companyId || 'N/A'}`)}
                         </h3>
                         <p class="text-sm text-gray-600">
                             <i class="fas fa-map-marker-alt mr-1"></i>
-                            ${company.state || 'Location not available'}
+                            ${escapeHtml(company.state || 'Location not available')}
                         </p>
                     </div>
                     <span class="bg-orange-100 text-orange-800 text-sm font-medium px-2.5 py-0.5 rounded-full">
@@ -184,12 +231,14 @@ class JobSearchApp {
                     ${company.jobs.map(job => `
                         <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                             <div class="flex-1">
-                                <a href="${job.link}" target="_blank" class="text-orange-600 hover:text-orange-800 font-medium">
-                                    ${job.title || 'Job Title'}
+                                <a href="${escapeHtml(job.link)}" target="_blank" class="text-orange-600 hover:text-orange-800 font-medium">
+                                    ${escapeHtml(job.title || 'Job Title')}
                                 </a>
-                                <p class="text-sm text-gray-500">${job.company || ''}</p>
+                                <p class="text-sm text-gray-500">
+                                    ${escapeHtml([job.city, formatPostedDate(job.posted_at)].filter(Boolean).join(' · '))}
+                                </p>
                             </div>
-                            <a href="${job.link}" target="_blank" class="text-orange-500 hover:text-orange-700 ml-2">
+                            <a href="${escapeHtml(job.link)}" target="_blank" class="text-orange-500 hover:text-orange-700 ml-2">
                                 <i class="fas fa-external-link-alt"></i>
                             </a>
                         </div>

@@ -3,8 +3,11 @@
 namespace App\Service\JobScanner\Services;
 
 use App\Service\JobScanner\Contracts\JobScanner;
+use App\Service\JobScanner\Exceptions\SourceUnavailableException;
+use App\Service\JobScanner\Support\SearchOptions;
 use PHPHtmlParser\Dom;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Promise;
 use GuzzleHttp\Pool;
 use GuzzleHttp\Psr7\Request;
@@ -103,15 +106,37 @@ class Jobinja implements JobScanner
         }
     }
 
+    /**
+     * @throws SourceUnavailableException when Jobinja can't be reached, is
+     *         serving its bot-protection challenge, or lists no companies.
+     */
     public function getCompanies(): array
     {
+        $top50Url = "https://jobinja.ir/top50";
+
         try {
-            $top50Url = "https://jobinja.ir/top50";
             $response = $this->client->get($top50Url);
-            $body = $response->getBody()->getContents();
+        } catch (GuzzleException $e) {
+            \Log::error("Jobinja request failed: " . $e->getMessage());
+            throw new SourceUnavailableException('Jobinja could not be reached.', 0, $e);
+        }
+
+        $body = $response->getBody()->getContents();
+
+        if ($this->isBotChallenge($body)) {
+            \Log::warning('Jobinja served a bot-protection challenge instead of the top50 page', [
+                'status' => $response->getStatusCode(),
+            ]);
+            throw new SourceUnavailableException('Jobinja is blocking automated requests (bot-protection check).');
+        }
+
+        if ($response->getStatusCode() !== 200) {
+            \Log::error('Jobinja top50 request failed', ['status' => $response->getStatusCode()]);
+            throw new SourceUnavailableException("Jobinja returned HTTP {$response->getStatusCode()}.");
+        }
+
         libxml_use_internal_errors(true);
         $doc = new \DOMDocument();
-        libxml_use_internal_errors(true);
         $doc->loadHTML($body);
         $links = $doc->getElementsByTagName('a');
         $extractedLinks = array();
@@ -127,24 +152,39 @@ class Jobinja implements JobScanner
             $extractedLinks[] = $linkHref;
         }
 
-            $extractedLinks = array_filter($extractedLinks, function ($item) {
-                return str_contains(strtolower($item), "https://jobinja.ir/companies/") && !str_contains(strtolower($item), "/jobs");
-            });
-            return array_values($extractedLinks);
-        } catch (\Exception $e) {
-            \Log::error("Failed to get companies: " . $e->getMessage());
-            return [];
+        $extractedLinks = array_values(array_filter($extractedLinks, function ($item) {
+            return str_contains(strtolower($item), "https://jobinja.ir/companies/") && !str_contains(strtolower($item), "/jobs");
+        }));
+
+        if (empty($extractedLinks)) {
+            // A 200 page with no company links means the layout changed or we got an unexpected page.
+            \Log::warning('Jobinja top50 page contained no company links', ['bytes' => strlen($body)]);
+            throw new SourceUnavailableException('Jobinja returned a page without any companies (the site layout may have changed).');
         }
+
+        return $extractedLinks;
+    }
+
+    /**
+     * Jobinja sits behind a CDN that answers bots with a "checking your browser" CAPTCHA page.
+     */
+    private function isBotChallenge(string $body): bool
+    {
+        return str_contains($body, 'Checking your browser')
+            || str_contains($body, 'redirect__captcha')
+            || str_contains($body, 'error-section--waiting');
     }
 
 
-    public function getJobs($keywords, $process = false)
+    /**
+     * City filtering uses the company's address, since Jobinja's company job
+     * lists don't give a per-job location. Sorting by date isn't supported:
+     * the scraped lists carry no posting dates.
+     */
+    public function getJobs($keywords, $process = false, ?SearchOptions $options = null)
     {
+        $options ??= new SearchOptions();
         $companyLinks = $this->getCompanies();
-        
-        if (empty($companyLinks)) {
-            return [];
-        }
 
         // Create requests for parallel processing
         $requests = [];
@@ -198,6 +238,10 @@ class Jobinja implements JobScanner
             $state = '';
             if ($locationResponse && $locationResponse->getStatusCode() === 200) {
                 $state = $this->parseLocationFromResponse($locationResponse->getBody()->getContents());
+            }
+
+            if (!$options->matchesCity($state)) {
+                continue;
             }
 
             $results[] = compact('link', 'state', 'jobs');
